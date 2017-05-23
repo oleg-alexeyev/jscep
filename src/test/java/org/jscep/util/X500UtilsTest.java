@@ -7,7 +7,7 @@ import javax.security.auth.x500.X500Principal;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.junit.Test;
 
-public final class X500Utils {
+public final class X500UtilsTest {
     @Test
     public void testIssue70() {
         String dn = "CN=CA ONE,OU=Test CA,DC=OpenXPKI,DC=ORG";
