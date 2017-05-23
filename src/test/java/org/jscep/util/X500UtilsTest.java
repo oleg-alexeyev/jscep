@@ -16,6 +16,8 @@ public final class X500UtilsTest {
         // This is the minimum test case that occurs in the SCEP transaction
         // Principal is typically created by end-user
         X500Principal principal = new X500Principal(dn);
+        assertEquals("Principal name is not equal", dn, principal.getName());
+        
         // jscep client encodes using BC encoding mechanism
         byte[] encoded = new X500Name(principal.getName()).getEncoded();
         // This simulates what _ought_ to happen in a server environment.
