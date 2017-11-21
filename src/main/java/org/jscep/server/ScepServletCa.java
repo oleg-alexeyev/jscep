@@ -3,15 +3,11 @@ package org.jscep.server;
 
 import java.math.BigInteger;
 import java.security.PrivateKey;
-import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
-import java.util.List;
-import java.util.Set;
 
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.jscep.transaction.TransactionId;
-import org.jscep.transport.response.Capability;
 
 final class ScepServletCa implements CertificateAuthority {
 
@@ -22,49 +18,57 @@ final class ScepServletCa implements CertificateAuthority {
     }
 
     @Override
-    public Set<Capability> getCapabilities(String identifier) throws Exception {
-        return servlet.doCapabilities(identifier);
+    public void getCapabilities(String identifier, ScepResponseBuilder builder)
+            throws Exception {
+        builder.capabilities(servlet.doCapabilities(identifier));
     }
 
     @Override
-    public List<X509Certificate> getCaCertificate(
-            String identifier
+    public void getCaCertificate(String identifier, ScepResponseBuilder builder)
+            throws Exception {
+        builder.caCertificate(servlet.doGetCaCertificate(identifier));
+    }
+
+    @Override
+    public void getNextCaCertificate(
+            String identifier, ScepResponseBuilder builder
     ) throws Exception {
-        return servlet.doGetCaCertificate(identifier);
+        builder.nextCaCertificate(servlet.getNextCaCertificate(identifier));
     }
 
     @Override
-    public List<X509Certificate> getNextCaCertificate(
-            String identifier
+    public void getCert(
+            X500Name issuer, BigInteger serial, ScepResponseBuilder builder
     ) throws Exception {
-        return servlet.getNextCaCertificate(identifier);
+        builder.foundCertificate(servlet.doGetCert(issuer, serial));
     }
 
     @Override
-    public List<X509Certificate> getCert(
-            X500Name issuer, BigInteger serial
+    public void getCertInitial(
+            X500Name issuer, X500Name subject,
+            TransactionId transId, ScepResponseBuilder builder
     ) throws Exception {
-        return servlet.doGetCert(issuer, serial);
+        builder.issuedCertificate(
+                servlet.doGetCertInitial(issuer, subject, transId)
+        );
     }
 
     @Override
-    public List<X509Certificate> getCertInitial(
-            X500Name issuer, X500Name subject, TransactionId transId
+    public void getCrl(
+            X500Name issuer, BigInteger serial, ScepResponseBuilder builder
     ) throws Exception {
-        return servlet.doGetCertInitial(issuer, subject, transId);
+        builder.crl(servlet.doGetCrl(issuer, serial));
     }
 
     @Override
-    public X509CRL getCrl(X500Name issuer, BigInteger serial) throws Exception {
-        return servlet.doGetCrl(issuer, serial);
-    }
-
-    @Override
-    public List<X509Certificate> enrol(
+    public void enrol(
             PKCS10CertificationRequest certificationRequest,
-            X509Certificate sender, TransactionId transId
+            X509Certificate sender, TransactionId transId,
+            ScepResponseBuilder builder
     ) throws Exception {
-        return servlet.doEnrol(certificationRequest, sender, transId);
+        builder.issuedCertificate(
+                servlet.doEnrol(certificationRequest, sender, transId)
+        );
     }
 
     @Override

@@ -78,11 +78,7 @@ public abstract class ScepServlet extends HttpServlet {
         );
         ScepResponse scepResponse = new ScepResponse();
 
-        try {
-            server.service(scepRequest, scepResponse);
-        } catch (Exception e) {
-            throw new ServletException(e);
-        }
+        server.service(scepRequest, scepResponse);
 
         res.setStatus(scepResponse.getStatus());
         for (Map.Entry<String, String> entry :
