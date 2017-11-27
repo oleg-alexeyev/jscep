@@ -147,7 +147,8 @@ public final class Capabilities {
      * <li>SHA-1</li>
      * <li>MD5</li>
      * </ol>
-     * If none of the above algorithms are supported, this method returns null.
+     * If none of the above algorithms are supported, this method
+     * falls back to SHA-256.
      *
      * @return the strongest message digest algorithm supported by the server
      *         and client.
@@ -162,7 +163,7 @@ public final class Capabilities {
         } else if (digestExists("MD5")) {
             return getDigest("MD5");
         }
-        return null;
+        return getDigest("SHA-256");
     }
 
     public String getStrongestSignatureAlgorithm() {
@@ -175,7 +176,7 @@ public final class Capabilities {
         } else if (sigExists("MD5")) {
             return "MD5withRSA";
         }
-        return null;
+        return "SHA256withRSA";
     }
 
     private boolean sigExists(final String sig) {
