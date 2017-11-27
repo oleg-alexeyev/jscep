@@ -9,8 +9,10 @@ import org.jscep.message.MessageEncodingException;
 import org.jscep.message.PkiMessage;
 import org.jscep.message.PkiMessageDecoder;
 import org.jscep.message.PkiMessageEncoder;
-import org.jscep.transport.AbstractTransport;
-import org.jscep.transport.Transport;
+import org.jscep.transport.ErrorMappingHandler;
+import org.jscep.transport.ResultHandler;
+import org.jscep.transport.ResultHolder;
+import org.jscep.transport.ScepTransport;
 import org.jscep.transport.TransportException;
 import org.jscep.transport.request.Request;
 import org.jscep.transport.response.PkiOperationResponseHandler;
@@ -22,7 +24,7 @@ import org.jscep.util.SignedDataUtils;
 public abstract class Transaction {
     private final PkiMessageEncoder encoder;
     private final PkiMessageDecoder decoder;
-    private final Transport transport;
+    private final ScepTransport transport;
 
     private State state;
     private FailInfo failInfo;
@@ -38,7 +40,7 @@ public abstract class Transaction {
      * @param decoder
      *            the decoder used to decode the response.
      */
-    public Transaction(final Transport transport,
+    public Transaction(final ScepTransport transport,
             final PkiMessageEncoder encoder, final PkiMessageDecoder decoder) {
         this.transport = transport;
         this.encoder = encoder;
@@ -80,11 +82,26 @@ public abstract class Transaction {
     /**
      * Sends the request and processes the server response.
      *
-     * @return the state as return by the SCEP server.
+     * @return the state as returned by the SCEP server.
      * @throws TransactionException
      *             if an error was encountered when sending this transaction.
      */
-    public abstract State send() throws TransactionException;
+    public State send() throws TransactionException {
+        ResultHolder<State, TransactionException> holder =
+                new ResultHolder<State, TransactionException>
+                        (TransactionException.class);
+        send(holder);
+        return holder.getResult();
+    }
+
+    /**
+     * Sends the request and processes the server response.
+     *
+     * @return the state as returned by the SCEP server.
+     * @throws TransactionException
+     *             if an error was encountered when sending this transaction.
+     */
+    public abstract void send(ResultHandler<State> handler);
 
     /**
      * Returns the ID of this transaction.
@@ -93,13 +110,10 @@ public abstract class Transaction {
      */
     public abstract TransactionId getId();
 
-    final CMSSignedData send(final PkiOperationResponseHandler handler,
-            final Request req) throws TransactionException {
-        try {
-            return transport.sendRequest(req, handler);
-        } catch (TransportException e) {
-            throw new TransactionException(e);
-        }
+    final void send(final PkiOperationResponseHandler responseHandler,
+            final Request req, final ResultHandler<CMSSignedData> handler) {
+        transport.sendRequest(req, responseHandler,
+                new TransactionErrorMappingHandler<CMSSignedData>(handler));
     }
 
     final PkiMessage<?> decode(final CMSSignedData res)
@@ -140,7 +154,7 @@ public abstract class Transaction {
     /**
      * This class represents the state of a transaction.
      */
-    public static enum State {
+    public enum State {
         /**
          * The transaction is a pending state.
          */
@@ -159,5 +173,21 @@ public abstract class Transaction {
          * enrolled certificates.
          */
         CERT_ISSUED,
+    }
+
+    static final class TransactionErrorMappingHandler<T>
+            extends ErrorMappingHandler<T> {
+
+        TransactionErrorMappingHandler(ResultHandler<T> responseHandler) {
+            super(responseHandler);
+        }
+
+        @Override
+        protected Throwable mapError(Throwable e) {
+            if (e instanceof TransportException) {
+                return e;
+            }
+            return new TransactionException(e);
+        }
     }
 }

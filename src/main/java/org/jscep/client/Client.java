@@ -22,63 +22,31 @@
  */
 package org.jscep.client;
 
-import java.io.IOException;
+import static org.jscep.client.ScepClient.Builder.scepClient;
+
 import java.math.BigInteger;
 import java.net.URL;
-import java.security.MessageDigest;
 import java.security.PrivateKey;
-import java.security.SignatureException;
-import java.security.cert.*;
-import java.util.Collection;
+import java.security.cert.CertStore;
+import java.security.cert.X509CRL;
+import java.security.cert.X509Certificate;
 
-import javax.security.auth.callback.Callback;
 import javax.security.auth.callback.CallbackHandler;
-import javax.security.auth.callback.UnsupportedCallbackException;
 import javax.security.auth.x500.X500Principal;
 
-import org.apache.commons.codec.binary.Hex;
-import org.bouncycastle.asn1.cms.IssuerAndSerialNumber;
-import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.X509Extension;
-import org.bouncycastle.cert.CertException;
-import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
-import org.bouncycastle.operator.ContentVerifierProvider;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.RuntimeOperatorException;
-import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
-import org.jscep.asn1.IssuerAndSubject;
 import org.jscep.client.inspect.CertStoreInspector;
 import org.jscep.client.inspect.CertStoreInspectorFactory;
 import org.jscep.client.inspect.DefaultCertStoreInspectorFactory;
 import org.jscep.client.verification.CertificateVerifier;
-import org.jscep.message.PkcsPkiEnvelopeDecoder;
-import org.jscep.message.PkcsPkiEnvelopeEncoder;
-import org.jscep.message.PkiMessageDecoder;
-import org.jscep.message.PkiMessageEncoder;
-import org.jscep.transaction.EnrollmentTransaction;
-import org.jscep.transaction.MessageType;
-import org.jscep.transaction.NonEnrollmentTransaction;
 import org.jscep.transaction.OperationFailureException;
-import org.jscep.transaction.Transaction;
-import org.jscep.transaction.Transaction.State;
 import org.jscep.transaction.TransactionException;
 import org.jscep.transaction.TransactionId;
-import org.jscep.transport.Transport;
-import org.jscep.transport.TransportException;
+import org.jscep.transport.ResultHolder;
+import org.jscep.transport.ScepTransportBridgeFactory;
 import org.jscep.transport.TransportFactory;
-import org.jscep.transport.TransportFactory.Method;
 import org.jscep.transport.UrlConnectionTransportFactory;
-import org.jscep.transport.request.GetCaCapsRequest;
-import org.jscep.transport.request.GetCaCertRequest;
-import org.jscep.transport.request.GetNextCaCertRequest;
 import org.jscep.transport.response.Capabilities;
-import org.jscep.transport.response.GetCaCapsResponseHandler;
-import org.jscep.transport.response.GetCaCertResponseHandler;
-import org.jscep.transport.response.GetNextCaCertResponseHandler;
-import org.jscep.util.X500Utils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The <tt>Client</tt> class is used for interacting with a SCEP server.
@@ -99,10 +67,6 @@ import org.slf4j.LoggerFactory;
  * support SCEP servers with multiple (or mandatory) profile names.
  */
 public final class Client {
-    /**
-     * Logger.
-     */
-    private static final Logger LOGGER = LoggerFactory.getLogger(Client.class);
 
     // A requester MUST have the following information locally configured:
     //
@@ -123,6 +87,7 @@ public final class Client {
     private final CallbackHandler handler;
     private CertStoreInspectorFactory inspectorFactory = new DefaultCertStoreInspectorFactory();
     private TransportFactory transportFactory = new UrlConnectionTransportFactory();
+    private ScepClient scepClient;
 
     /**
      * Constructs a new <tt>Client</tt> instance using the provided
@@ -140,35 +105,6 @@ public final class Client {
      *            the callback handler used to check the CA identity.
      */
     public Client(final URL url, final CallbackHandler handler) {
-        this.url = url;
-        this.handler = handler;
-
-        validateInput();
-    }
-
-    /**
-     * Constructs a new <tt>Client</tt> instance using the provided
-     * <tt>CertificateVerifier</tt> for the provided URL.
-     * 
-     * The provided <tt>CertificateVerifier</tt> is used to verify that the
-     * identity of the SCEP server matches what the client expects.
-     *
-     * @param url
-     *            the URL of the SCEP server.
-     * @param verifier
-     *            the verifier used to check the CA identity.
-     */
-    public Client(final URL url, final CertificateVerifier verifier) {
-        this.url = url;
-        this.handler = new DefaultCallbackHandler(verifier);
-
-        validateInput();
-    }
-
-    /**
-     * Validates all the input to this client.
-     */
-    private void validateInput() {
         // Check for null values first.
         if (url == null) {
             throw new NullPointerException("URL should not be null");
@@ -189,6 +125,25 @@ public final class Client {
             throw new NullPointerException(
                     "Callback handler should not be null");
         }
+
+        this.url = url;
+        this.handler = handler;
+    }
+
+    /**
+     * Constructs a new <tt>Client</tt> instance using the provided
+     * <tt>CertificateVerifier</tt> for the provided URL.
+     *
+     * The provided <tt>CertificateVerifier</tt> is used to verify that the
+     * identity of the SCEP server matches what the client expects.
+     *
+     * @param url
+     *            the URL of the SCEP server.
+     * @param verifier
+     *            the verifier used to check the CA identity.
+     */
+    public Client(final URL url, final CertificateVerifier verifier) {
+        this(url, new DefaultCallbackHandler(verifier));
     }
 
     // INFORMATIONAL REQUESTS
@@ -213,16 +168,11 @@ public final class Client {
      * @return the capabilities of the server.
      */
     public Capabilities getCaCapabilities(final String profile) {
-        LOGGER.debug("Determining capabilities of SCEP server");
-        // NON-TRANSACTIONAL
-        final GetCaCapsRequest req = new GetCaCapsRequest(profile);
-        final Transport trans = transportFactory.forMethod(Method.GET, url);
-        try {
-            return trans.sendRequest(req, new GetCaCapsResponseHandler());
-        } catch (TransportException e) {
-            LOGGER.warn("AbstractTransport problem when determining capabilities.  Using empty capabilities.");
-            return new Capabilities();
-        }
+        ResultHolder<Capabilities, RuntimeException> holder =
+                new ResultHolder<Capabilities, RuntimeException>
+                        (RuntimeException.class);
+        client().getCaCapabilities(profile, holder);
+        return holder.getResult();
     }
 
     /**
@@ -263,53 +213,11 @@ public final class Client {
      */
     public CertStore getCaCertificate(final String profile)
             throws ClientException {
-        LOGGER.debug("Retrieving current CA certificate");
-        // NON-TRANSACTIONAL
-        // CA and RA public key distribution
-        final GetCaCertRequest req = new GetCaCertRequest(profile);
-        final Transport trans = transportFactory.forMethod(Method.GET, url);
-
-        CertStore store;
-        try {
-            store = trans.sendRequest(req, new GetCaCertResponseHandler());
-        } catch (TransportException e) {
-            throw new ClientException(e);
-        }
-        CertStoreInspector certs = inspectorFactory.getInstance(store);
-        verifyCA(certs.getIssuer());
-        verifyRA(certs.getIssuer(), certs.getRecipient());
-        verifyRA(certs.getIssuer(), certs.getSigner());
-
-        return store;
-    }
-
-    private void verifyRA(final X509Certificate ca, final X509Certificate ra)
-            throws ClientException {
-        LOGGER.debug("Verifying signature of RA certificate");
-        if (ca.equals(ra)) {
-            LOGGER.debug("RA and CA are identical");
-
-            return;
-        }
-        try {
-            JcaX509CertificateHolder raHolder = new JcaX509CertificateHolder(ra);
-
-            ContentVerifierProvider verifierProvider = new JcaContentVerifierProviderBuilder()
-                    .build(ca);
-
-            if (!raHolder.isSignatureValid(verifierProvider)) {
-                LOGGER.debug("Signature verification failed for RA.");
-                throw new ClientException("RA not issued by CA");
-            } else {
-                LOGGER.debug("Signature verification passed for RA.");
-            }
-        } catch (CertException e) {
-            throw new ClientException(e);
-        } catch (CertificateEncodingException e) {
-            throw new ClientException(e);
-        } catch (OperatorCreationException e) {
-            throw new ClientException(e);
-        }
+        ResultHolder<CertStore, ClientException> holder =
+                new ResultHolder<CertStore, ClientException>
+                        (ClientException.class);
+        client().getCaCertificate(profile, holder);
+        return holder.getResult();
     }
 
     /**
@@ -344,25 +252,11 @@ public final class Client {
      */
     public CertStore getRolloverCertificate(final String profile)
             throws ClientException {
-        LOGGER.debug("Retriving next CA certificate from CA");
-        // NON-TRANSACTIONAL
-        if (!getCaCapabilities(profile).isRolloverSupported()) {
-            throw new UnsupportedOperationException();
-        }
-        final CertStore store = getCaCertificate(profile);
-        // The CA or RA
-        CertStoreInspector certs = inspectorFactory.getInstance(store);
-        final X509Certificate signer = certs.getSigner();
-
-        final Transport trans = transportFactory.forMethod(Method.GET, url);
-        final GetNextCaCertRequest req = new GetNextCaCertRequest(profile);
-
-        try {
-            return trans.sendRequest(req, new GetNextCaCertResponseHandler(
-                    signer));
-        } catch (TransportException e) {
-            throw new ClientException(e);
-        }
+        ResultHolder<CertStore, ClientException> holder =
+                new ResultHolder<CertStore, ClientException>
+                        (ClientException.class);
+        client().getRolloverCertificate(profile, holder);
+        return holder.getResult();
     }
 
     // TRANSACTIONAL
@@ -423,50 +317,12 @@ public final class Client {
             final PrivateKey key, final X500Principal issuer,
             final BigInteger serial, final String profile)
             throws ClientException, OperationFailureException {
-        LOGGER.debug("Retriving CRL from CA");
-        // TRANSACTIONAL
-        // CRL query
-        checkDistributionPoints(profile);
-
-        X500Name name = new X500Name(issuer.getName());
-        IssuerAndSerialNumber iasn = new IssuerAndSerialNumber(name, serial);
-        Transport transport = createTransport(profile);
-        final Transaction t = new NonEnrollmentTransaction(transport,
-                getEncoder(identity, key, profile), getDecoder(identity, key,
-                        profile), iasn, MessageType.GET_CRL);
-        State state;
-        try {
-            state = t.send();
-        } catch (TransactionException e) {
-            throw new ClientException(e);
-        }
-
-        if (state == State.CERT_ISSUED) {
-            try {
-                Collection<X509CRL> crls = (Collection<X509CRL>) t
-                        .getCertStore().getCRLs(null);
-                if (crls.size() == 0) {
-                    return null;
-                }
-                return crls.iterator().next();
-            } catch (CertStoreException e) {
-                throw new RuntimeException(e);
-            }
-        } else if (state == State.CERT_REQ_PENDING) {
-            throw new IllegalStateException();
-        } else {
-            throw new OperationFailureException(t.getFailInfo());
-        }
-    }
-
-    private void checkDistributionPoints(final String profile)
-            throws ClientException {
-        CertStore store = getCaCertificate(profile);
-        CertStoreInspector certs = inspectorFactory.getInstance(store);
-        final X509Certificate ca = certs.getIssuer();
-        if (ca.getExtensionValue(X509Extension.cRLDistributionPoints.getId()) != null) {
-            LOGGER.warn("CA supports distribution points");
-        }
+        ResultHolder<X509CRL, ClientException> holder =
+                new ResultHolder<X509CRL, ClientException>
+                        (ClientException.class);
+        client().getRevocationList(identity, key, issuer, serial, profile,
+                holder);
+        return holder.getResult();
     }
 
     /**
@@ -520,34 +376,11 @@ public final class Client {
     public CertStore getCertificate(final X509Certificate identity,
             final PrivateKey key, final BigInteger serial, final String profile)
             throws OperationFailureException, ClientException {
-        LOGGER.debug("Retriving certificate from CA");
-        // TRANSACTIONAL
-        // Certificate query
-        final CertStore store = getCaCertificate(profile);
-        CertStoreInspector certs = inspectorFactory.getInstance(store);
-        final X509Certificate ca = certs.getIssuer();
-
-        X500Name name = new X500Name(ca.getSubjectX500Principal().toString());
-        IssuerAndSerialNumber iasn = new IssuerAndSerialNumber(name, serial);
-        Transport transport = createTransport(profile);
-        final Transaction t = new NonEnrollmentTransaction(transport,
-                getEncoder(identity, key, profile), getDecoder(identity, key,
-                        profile), iasn, MessageType.GET_CERT);
-
-        State state;
-        try {
-            state = t.send();
-        } catch (TransactionException e) {
-            throw new ClientException(e);
-        }
-
-        if (state == State.CERT_ISSUED) {
-            return t.getCertStore();
-        } else if (state == State.CERT_REQ_PENDING) {
-            throw new IllegalStateException();
-        } else {
-            throw new OperationFailureException(t.getFailInfo());
-        }
+        ResultHolder<CertStore, ClientException> holder =
+                new ResultHolder<CertStore, ClientException>
+                        (ClientException.class);
+        client().getCertificate(identity, key, serial, profile, holder);
+        return holder.getResult();
     }
 
     /**
@@ -599,57 +432,11 @@ public final class Client {
     public EnrollmentResponse enrol(final X509Certificate identity,
             final PrivateKey key, final PKCS10CertificationRequest csr,
             final String profile) throws ClientException, TransactionException {
-        LOGGER.debug("Enrolling certificate with CA");
-
-        if (isSelfSigned(identity)) {
-            LOGGER.debug("Certificate is self-signed");
-            X500Name csrSubject = csr.getSubject();
-            X500Name idSubject = X500Utils.toX500Name(identity
-                    .getSubjectX500Principal());
-
-            if (!csrSubject.equals(idSubject)) {
-                LOGGER.error("The self-signed certificate MUST use the same subject name as in the PKCS#10 request.");
-            }
-        }
-        // TRANSACTIONAL
-        // Certificate enrollment
-        final Transport transport = createTransport(profile);
-        PkiMessageEncoder encoder = getEncoder(identity, key, profile);
-        PkiMessageDecoder decoder = getDecoder(identity, key, profile);
-        final EnrollmentTransaction trans = new EnrollmentTransaction(
-                transport, encoder, decoder, csr);
-
-        try {
-            MessageDigest digest = getCaCapabilities(profile)
-                    .getStrongestMessageDigest();
-            byte[] hash = digest.digest(csr.getEncoded());
-
-            LOGGER.debug("{} PKCS#10 Fingerprint: [{}]", digest.getAlgorithm(),
-                    new String(Hex.encodeHex(hash)));
-        } catch (IOException e) {
-            LOGGER.error("Error getting encoded CSR", e);
-        }
-
-        return send(trans);
-    }
-
-    private boolean isSelfSigned(final X509Certificate cert)
-            throws ClientException {
-        try {
-            JcaX509CertificateHolder holder = new JcaX509CertificateHolder(cert);
-            ContentVerifierProvider verifierProvider = new JcaContentVerifierProviderBuilder()
-                    .build(holder);
-
-            return holder.isSignatureValid(verifierProvider);
-        } catch (RuntimeOperatorException e) {
-            if(e.getCause() instanceof  SignatureException) {
-                LOGGER.warn("SignatureException detected so we consider that the certificate is not self signed");
-                return false;
-            }
-            throw new ClientException(e);
-        } catch (Exception e) {
-            throw new ClientException(e);
-        }
+        ResultHolder<EnrollmentResponse, ClientException> holder =
+                new ResultHolder<EnrollmentResponse, ClientException>
+                        (ClientException.class);
+        client().enrol(identity, key, csr, profile, holder);
+        return holder.getResult();
     }
 
     public EnrollmentResponse poll(final X509Certificate identity,
@@ -663,96 +450,12 @@ public final class Client {
             final PrivateKey identityKey, final X500Principal subject,
             final TransactionId transId, final String profile)
             throws ClientException, TransactionException {
-        final Transport transport = createTransport(profile);
-        CertStore store = getCaCertificate(profile);
-        CertStoreInspector certStore = inspectorFactory.getInstance(store);
-        X509Certificate issuer = certStore.getIssuer();
-
-        PkiMessageEncoder encoder = getEncoder(identity, identityKey, profile);
-        PkiMessageDecoder decoder = getDecoder(identity, identityKey, profile);
-
-        IssuerAndSubject ias = new IssuerAndSubject(X500Utils.toX500Name(issuer
-                .getSubjectX500Principal()), X500Utils.toX500Name(subject));
-
-        final EnrollmentTransaction trans = new EnrollmentTransaction(
-                transport, encoder, decoder, ias, transId);
-        return send(trans);
-    }
-
-    private EnrollmentResponse send(final EnrollmentTransaction trans)
-            throws TransactionException {
-        State s = trans.send();
-
-        if (s == State.CERT_ISSUED) {
-            return new EnrollmentResponse(trans.getId(), trans.getCertStore());
-        } else if (s == State.CERT_REQ_PENDING) {
-            return new EnrollmentResponse(trans.getId());
-        } else {
-            return new EnrollmentResponse(trans.getId(), trans.getFailInfo());
-        }
-    }
-
-    private PkiMessageEncoder getEncoder(final X509Certificate identity,
-            final PrivateKey priKey, final String profile)
-            throws ClientException {
-        CertStore store = getCaCertificate(profile);
-        Capabilities caps = getCaCapabilities(profile);
-        CertStoreInspector certs = inspectorFactory.getInstance(store);
-        X509Certificate recipientCertificate = certs.getRecipient();
-        PkcsPkiEnvelopeEncoder envEncoder = new PkcsPkiEnvelopeEncoder(
-                recipientCertificate, caps.getStrongestCipher());
-
-        String sigAlg = caps.getStrongestSignatureAlgorithm();
-        return new PkiMessageEncoder(priKey, identity, envEncoder, sigAlg);
-    }
-
-    private PkiMessageDecoder getDecoder(final X509Certificate identity,
-            final PrivateKey key, final String profile) throws ClientException {
-        final CertStore store = getCaCertificate(profile);
-        CertStoreInspector certs = inspectorFactory.getInstance(store);
-        X509Certificate signer = certs.getSigner();
-        PkcsPkiEnvelopeDecoder envDecoder = new PkcsPkiEnvelopeDecoder(
-                identity, key);
-
-        return new PkiMessageDecoder(signer, envDecoder);
-    }
-
-    /**
-     * Creates a new transport based on the capabilities of the server.
-     *
-     * @param profile
-     *            profile to use for determining if HTTP POST is supported
-     * @return the new transport.
-     */
-    private Transport createTransport(final String profile) {
-        if (getCaCapabilities(profile).isPostSupported()) {
-            return transportFactory.forMethod(Method.POST, url);
-        } else {
-            return transportFactory.forMethod(Method.GET, url);
-        }
-    }
-
-    private void verifyCA(final X509Certificate cert) throws ClientException {
-        CertificateVerificationCallback callback = new CertificateVerificationCallback(
-                cert);
-        try {
-            LOGGER.debug("Requesting certificate verification.");
-            Callback[] callbacks = new Callback[1];
-            callbacks[0] = callback;
-            handler.handle(callbacks);
-        } catch (UnsupportedCallbackException e) {
-            LOGGER.debug("Certificate verification failed.");
-            throw new ClientException(e);
-        } catch (IOException e) {
-            throw new ClientException(e);
-        }
-        if (!callback.isVerified()) {
-            LOGGER.debug("Certificate verification failed.");
-            throw new ClientException(
-                    "CA certificate fingerprint could not be verified.");
-        } else {
-            LOGGER.debug("Certificate verification passed.");
-        }
+        ResultHolder<EnrollmentResponse, ClientException> holder =
+                new ResultHolder<EnrollmentResponse, ClientException>
+                        (ClientException.class);
+        client().poll(identity, identityKey, subject, transId, profile,
+                holder);
+        return holder.getResult();
     }
 
     public synchronized void setCertStoreInspectorFactory(
@@ -763,5 +466,17 @@ public final class Client {
     public synchronized void setTransportFactory(
     		final TransportFactory transportFactory) {
     	this.transportFactory = transportFactory;
+    }
+
+    private synchronized ScepClient client() {
+        if (scepClient == null) {
+            scepClient = scepClient()
+                    .url(url)
+                    .callbackHandler(handler)
+                    .certStoreInspectorFactory(inspectorFactory)
+                    .transportFactory(new ScepTransportBridgeFactory(transportFactory))
+                    .build();
+        }
+        return scepClient;
     }
 }

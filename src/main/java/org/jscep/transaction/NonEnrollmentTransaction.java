@@ -11,8 +11,9 @@ import org.jscep.message.MessageEncodingException;
 import org.jscep.message.PkiMessageDecoder;
 import org.jscep.message.PkiMessageEncoder;
 import org.jscep.message.PkiRequest;
-import org.jscep.transport.AbstractTransport;
-import org.jscep.transport.Transport;
+import org.jscep.transport.ErrorDelegatingHandler;
+import org.jscep.transport.ResultHandler;
+import org.jscep.transport.ScepTransport;
 import org.jscep.transport.request.PkiOperationRequest;
 import org.jscep.transport.response.PkiOperationResponseHandler;
 
@@ -43,7 +44,7 @@ public final class NonEnrollmentTransaction extends Transaction {
      * @param msgType
      *            the type of message.
      */
-    public NonEnrollmentTransaction(final Transport transport,
+    public NonEnrollmentTransaction(final ScepTransport transport,
             final PkiMessageEncoder encoder, final PkiMessageDecoder decoder,
             final IssuerAndSerialNumber iasn, final MessageType msgType) {
         super(transport, encoder, decoder);
@@ -77,29 +78,43 @@ public final class NonEnrollmentTransaction extends Transaction {
      *             if an error was encountered when sending this transaction.
      */
     @Override
-    public State send() throws TransactionException {
-        final PkiOperationResponseHandler handler = new PkiOperationResponseHandler();
+    public void send(final ResultHandler<State> handler) {
+        final PkiOperationResponseHandler responseHandler = new PkiOperationResponseHandler();
         CMSSignedData signedData;
         try {
             signedData = encode(request);
         } catch (MessageEncodingException e) {
-            throw new TransactionException(e);
+            handler.handle(null, new TransactionException(e));
+            return;
         }
 
-        CMSSignedData res = send(handler, new PkiOperationRequest(signedData));
+        send(responseHandler,
+                new PkiOperationRequest(signedData),
+                new ErrorDelegatingHandler<CMSSignedData>(handler) {
+                    @Override
+                    protected void doHandle(CMSSignedData res) {
+                        handleResponse(res, handler);
+                    }
+                }
+        );
+    }
+
+    private void handleResponse(final CMSSignedData res,
+                          final ResultHandler<State> handler) {
         CertRep response;
         try {
             response = (CertRep) decode(res);
         } catch (MessageDecodingException e) {
-            throw new TransactionException(e);
+            handler.handle(null, new TransactionException(e));
+            return;
         }
 
         if (response.getPkiStatus() == PkiStatus.FAILURE) {
-            return failure(response.getFailInfo());
+            handler.handle(failure(response.getFailInfo()), null);
         } else if (response.getPkiStatus() == PkiStatus.SUCCESS) {
-            return success(extractCertStore(response));
+            handler.handle(success(extractCertStore(response)), null);
         } else {
-            throw new TransactionException("Invalid Response");
+            handler.handle(null, new TransactionException("Invalid Response"));
         }
     }
 }
