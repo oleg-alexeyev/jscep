@@ -3,9 +3,15 @@ package org.jscep.transport;
 
 import java.net.URL;
 
+import org.jscep.client.ScepClient;
 import org.jscep.transport.request.Request;
 import org.jscep.transport.response.ScepResponseHandler;
 
+/**
+ * {@link ScepTransportFactory} which uses {@link TransportFactory}
+ * and provides {@link ScepClient} with {@link ScepTransport} implementation
+ * over {@link Transport}.
+ */
 public class ScepTransportBridgeFactory implements ScepTransportFactory {
 
     private final TransportFactory factory;

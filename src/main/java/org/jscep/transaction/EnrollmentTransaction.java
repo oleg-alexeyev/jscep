@@ -98,11 +98,10 @@ public final class EnrollmentTransaction extends Transaction {
     }
 
     /**
-     * Sends the request to the SCEP server and processes the response..
+     * Sends the request to the SCEP server and processes the response.
      *
-     * @return the transaction state as returned by the SCEP server.
-     * @throws TransactionException
-     *             if any transaction-related error occurs.
+     * @param handler the handler accepting a {@link State}
+     *                or {@link TransactionException} if an error occurs.
      */
     @Override
     public void send(final ResultHandler<State> handler) {

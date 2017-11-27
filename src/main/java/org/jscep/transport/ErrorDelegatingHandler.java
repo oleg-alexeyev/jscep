@@ -1,6 +1,11 @@
 package org.jscep.transport;
 
 
+/**
+ * Simplifies exception mapping from one layer to another
+ *
+ * @param <T> type of result
+ */
 public abstract class ErrorDelegatingHandler<T>
         implements ResultHandler<T> {
 

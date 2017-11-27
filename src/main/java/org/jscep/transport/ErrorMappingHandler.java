@@ -1,6 +1,11 @@
 package org.jscep.transport;
 
 
+/**
+ * Simplifies result handling by delegating error handling to another handler.
+ *
+ * @param <T> type of result
+ */
 public abstract class ErrorMappingHandler<T> implements ResultHandler<T> {
 
     private final ResultHandler<T> handler;

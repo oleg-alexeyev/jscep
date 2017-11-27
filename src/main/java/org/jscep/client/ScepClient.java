@@ -22,6 +22,7 @@
  */
 package org.jscep.client;
 
+import static org.bouncycastle.asn1.x509.Extension.cRLDistributionPoints;
 import static org.jscep.client.CaProperties.Builder.caProperties;
 
 import java.io.IOException;
@@ -45,7 +46,6 @@ import javax.security.auth.x500.X500Principal;
 import org.apache.commons.codec.binary.Hex;
 import org.bouncycastle.asn1.cms.IssuerAndSerialNumber;
 import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x509.X509Extension;
 import org.bouncycastle.cert.CertException;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.operator.ContentVerifierProvider;
@@ -92,21 +92,46 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The <tt>ScepClient</tt> class is used for interacting with a SCEP server.
+ * It's a non-blocking version of the client, providing for implementation
+ * over non-blocking HTTP clients like Vert.x or Spring WebFlux.
  * <p>
  * Typical usage might look like so:
  *
  * <pre>
- * // Create the client
- * URL server = new URL(&quot;http://jscep.org/scep/pkiclient.exe&quot;);
- * CertificateVerifier verifier = new ConsoleCertificateVerifier();
- * Client client = new Client(server, verifier);
+ *     // Create the client
+ *     URL url = new URL(&quot;http://jscep.org/scep/pkiclient.exe&quot;);
+ *     MessageDigest digest = MessageDigest.getInstance(&quot;SHA-256&quot;);
+ *     byte[] expected = Hex.decode(&quot;835f179febba96f32a47610a679de400&quot;.toCharArray());
+ *     CertificateVerifier verifier = new MessageDigestCertificateVerifier(digest, expected);
+ *     scepClient()
+ *             .url(url)
+ *             .certificateVerifier(verifier)
+ *             .transportFactory(new SomeNonBlockingTransportFactory())
+ *             .build();
  *
- * // Invoke operations on the client.
- * client.getCaCapabilities();
+ *     // Invoke operations on the client.
+ *     client.getCaCapabilities((caps, e) -> e != null ? handleError(e) : handleCaps(caps));
  * </pre>
  *
  * Each of the operations of this class is overloaded with a profile argument to
  * support SCEP servers with multiple (or mandatory) profile names.
+ * <p>
+ * To provide for non-blocking behavior, methods accept a
+ * <code>ResultHandler</code> callback which receives a result or an error
+ * instead of returning result / throwing an exception. This can be used in
+ * conjunction with other non-blocking APIs, e.g. with
+ * <code><a href="https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/CompletableFuture.html">CompletableFuture</a></code>
+ * from Java 8:
+ * <pre>
+ *     CompletableFuture&lt;Capacities> f = new CompletableFuture()
+ *     client.getCaCapabilities((caps, e) -> e != null ? f.completeExceptionally(e) : f.complete(caps);
+ * </pre>
+ * or with
+ * <code><a href="http://projectreactor.io/docs/core/release/api/reactor/core/publisher/Mono.html">Mono</a></code>
+ * from Project Reactor:
+ * <pre>
+ *     Mono.create(sink -> client.getCaCapabilities((caps, e) -> e != null ? sink.error(e) : sink.success(caps)));
+ * </pre>
  */
 public final class ScepClient {
 
@@ -174,9 +199,10 @@ public final class ScepClient {
     // INFORMATIONAL REQUESTS
 
     /**
-     * Retrieves the set of SCEP capabilities from the CA.
+     * Retrieves the capabilities of the SCEP server.
      *
-     * @return the capabilities of the server.
+     * @param handler the handler accepting the result or
+     *                empty {@link Capabilities} if a transport error occurs.
      */
     public void getCaCapabilities(final ResultHandler<Capabilities> handler) {
         // NON-TRANSACTIONAL
@@ -190,7 +216,8 @@ public final class ScepClient {
      *
      * @param profile
      *            the SCEP server profile.
-     * @return the capabilities of the server.
+     * @param handler the handler accepting the result or
+     *                empty {@link Capabilities} if a transport error occurs.
      */
     public void getCaCapabilities(final String profile,
                                   final ResultHandler<Capabilities> handler) {
@@ -220,9 +247,9 @@ public final class ScepClient {
      * multiple entities (for example, if it uses a separate entity for signing
      * SCEP messages), additional RA certificates will also be returned.
      *
-     * @return the certificate store.
-     * @throws ClientException
-     *             if any client error occurs.
+     * @param handler the handler accepting a {@link CertStore} containing
+     *                all CA/RA certificates or {@link ClientException} if an
+     *                error occurs.
      * @see DefaultCertStoreInspectorFactory
      */
     public void getCaCertificate(ResultHandler<CertStore> handler) {
@@ -242,9 +269,9 @@ public final class ScepClient {
      *
      * @param profile
      *            the SCEP server profile.
-     * @return the certificate store.
-     * @throws ClientException
-     *             if any client error occurs.
+     * @param handler the handler accepting a {@link CertStore} containing
+     *                all CA/RA certificates or {@link ClientException} if an
+     *                error occurs.
      * @see CertStoreInspector
      */
     public void getCaCertificate(final String profile,
@@ -341,9 +368,9 @@ public final class ScepClient {
      * This method will query the SCEP server to determine if the CA is
      * scheduled to start using a new certificate for issuing.
      *
-     * @return the certificate store.
-     * @throws ClientException
-     *             if any client error occurs.
+     * @param handler the handler accepting a {@link CertStore} containing
+     *                all CA/RA certificates or {@link ClientException} if an
+     *                error occurs.
      * @see CertStoreInspector
      */
     public void getRolloverCertificate(ResultHandler<CertStore> handler) {
@@ -360,9 +387,9 @@ public final class ScepClient {
      *
      * @param profile
      *            the SCEP server profile.
-     * @return the certificate store.
-     * @throws ClientException
-     *             if any client error occurs.
+     * @param handler the handler accepting a {@link CertStore} containing
+     *                all CA/RA certificates or {@link ClientException} if an
+     *                error occurs.
      * @see CertStoreInspector
      */
     public void getRolloverCertificate(
@@ -421,11 +448,9 @@ public final class ScepClient {
      *            the name of the certificate issuer.
      * @param serial
      *            the serial number of the certificate.
-     * @return the CRL corresponding to the issuer and serial.
-     * @throws ClientException
-     *             if any client errors occurs.
-     * @throws OperationFailureException
-     *             if the request fails.
+     * @param handler the handler accepting a {@link X509CRL},
+     *               or {@link OperationFailureException} if the request fails,
+     *               or {@link ClientException} if an error occurs.
      */
     public void getRevocationList(final X509Certificate identity,
             final PrivateKey key, final X500Principal issuer,
@@ -451,11 +476,9 @@ public final class ScepClient {
      *            the serial number of the certificate.
      * @param profile
      *            the SCEP server profile.
-     * @return the CRL corresponding to the issuer and serial.
-     * @throws ClientException
-     *             if any client errors occurs.
-     * @throws OperationFailureException
-     *             if the request fails.
+     * @param handler the handler accepting a {@link X509CRL},
+     *               or {@link OperationFailureException} if the request fails,
+     *               or {@link ClientException} if an error occurs.
      */
     public void getRevocationList(
             final X509Certificate identity,
@@ -531,7 +554,7 @@ public final class ScepClient {
     private void checkDistributionPoints(final CertStore caCertStore) {
         CertStoreInspector certs = inspectorFactory.getInstance(caCertStore);
         final X509Certificate ca = certs.getIssuer();
-        if (ca.getExtensionValue(X509Extension.cRLDistributionPoints.getId()) != null) {
+        if (ca.getExtensionValue(cRLDistributionPoints.getId()) != null) {
             LOGGER.warn("CA supports distribution points");
         }
     }
@@ -549,11 +572,9 @@ public final class ScepClient {
      *            the private key to sign the SCEP request.
      * @param serial
      *            the serial number of the requested certificate.
-     * @return the certificate store containing the requested certificate.
-     * @throws ClientException
-     *             if any client error occurs.
-     * @throws OperationFailureException
-     *             if the SCEP server refuses to service the request.
+     * @param handler the handler accepting an {@link X509Certificate},
+     *               or {@link OperationFailureException} if the request fails,
+     *               or {@link ClientException} if an error occurs.
      */
     public void getCertificate(
             final X509Certificate identity,
@@ -580,11 +601,9 @@ public final class ScepClient {
      *            the serial number of the requested certificate.
      * @param profile
      *            the SCEP server profile.
-     * @return the certificate store containing the requested certificate.
-     * @throws ClientException
-     *             if any client error occurs.
-     * @throws OperationFailureException
-     *             if the SCEP server refuses to service the request.
+     * @param handler the handler accepting an {@link X509Certificate},
+     *               or {@link OperationFailureException} if the request fails,
+     *               or {@link ClientException} if an error occurs.
      */
     public void getCertificate(
             final X509Certificate identity,
@@ -657,11 +676,10 @@ public final class ScepClient {
      *            the private key to sign the SCEP request.
      * @param csr
      *            the CSR to enrol.
-     * @return the certificate store returned by the server.
-     * @throws ClientException
-     *             if any client error occurs.
-     * @throws TransactionException
-     *             if there is a problem with the SCEP transaction.
+     * @param handler the handler accepting an {@link EnrollmentResponse},
+     *               or {@link TransactionException} if there is a problem
+     *               with the SCEP transaction, or {@link ClientException}
+     *               if an error occurs.
      * @see CertStoreInspector
      */
     public void enrol(
@@ -675,7 +693,7 @@ public final class ScepClient {
     /**
      * Sends a CSR to the SCEP server for enrolling in a PKI.
      * <p>
-     * This method enrols the provider <tt>CertificationRequest</tt> into the
+     * This method enrols the provided <tt>CertificationRequest</tt> into the
      * PKI represented by the SCEP server.
      *
      * @param identity
@@ -686,11 +704,10 @@ public final class ScepClient {
      *            the CSR to enrol.
      * @param profile
      *            the SCEP server profile.
-     * @return the certificate store returned by the server.
-     * @throws ClientException
-     *             if any client error occurs.
-     * @throws TransactionException
-     *             if there is a problem with the SCEP transaction.
+     * @param handler the handler accepting an {@link EnrollmentResponse},
+     *               or {@link TransactionException} if there is a problem
+     *               with the SCEP transaction, or {@link ClientException}
+     *               if an error occurs.
      * @see CertStoreInspector
      */
     public void enrol(
@@ -699,7 +716,7 @@ public final class ScepClient {
             final PKCS10CertificationRequest csr,
             final String profile,
             final ResultHandler<EnrollmentResponse> handler
-    ) throws ClientException {
+    ) {
 
         caProperties(this)
                 .profile(profile)
@@ -800,6 +817,25 @@ public final class ScepClient {
         poll(identity, identityKey, subject, transId, null, handler);
     }
 
+    /**
+     * Polls the SCEP server for enrollment results.
+     *
+     * @param identity
+     *            the identity of the client.
+     * @param identityKey
+     *            the private key to sign the SCEP request.
+     * @param subject
+     *            subject of the original certificate request.
+     * @param transId
+     *            id of the original enrollment transaction.
+     * @param profile
+     *            the SCEP server profile.
+     * @param handler the handler accepting an {@link EnrollmentResponse},
+     *               or {@link TransactionException} if there is a problem
+     *               with the SCEP transaction, or {@link ClientException}
+     *               if an error occurs.
+     * @see CertStoreInspector
+     */
     public void poll(
             final X509Certificate identity,
             final PrivateKey identityKey, final X500Principal subject,

@@ -70,12 +70,11 @@ public final class NonEnrollmentTransaction extends Transaction {
     /**
      * Sends the request and processes the server response.
      * <p>
-     * If the server returns a pending response, this method will throw a
+     * If the server returns a pending response, handler will not receive a
      * <tt>TransactionException</tt>, since this is unexpected behaviour.
      * 
-     * @return the state as returned by the SCEP server.
-     * @throws TransactionException
-     *             if an error was encountered when sending this transaction.
+     * @param handler the handler accepting a {@link State}
+     *                or {@link TransactionException} if an error occurs.
      */
     @Override
     public void send(final ResultHandler<State> handler) {

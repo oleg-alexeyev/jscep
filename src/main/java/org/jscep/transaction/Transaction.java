@@ -97,9 +97,8 @@ public abstract class Transaction {
     /**
      * Sends the request and processes the server response.
      *
-     * @return the state as returned by the SCEP server.
-     * @throws TransactionException
-     *             if an error was encountered when sending this transaction.
+     * @param handler the handler accepting a {@link State}
+     *                or {@link TransactionException} if an error occurs.
      */
     public abstract void send(ResultHandler<State> handler);
 

@@ -1,6 +1,15 @@
 package org.jscep.transport;
 
 
+/**
+ * <code>ResultHandler</code> implementation for synchronous operation -
+ * accepts a result or an error and either returns result from
+ * <code>getResult()</code> or re-throws an anticipated exception. If
+ * exception is not anticipated, it's wrapped into a {@link RuntimeException}.
+ *
+ * @param <T> type of result
+ * @param <E> type of anticipated exception
+ */
 public final class ResultHolder<T, E extends Throwable>
         implements ResultHandler<T> {
 

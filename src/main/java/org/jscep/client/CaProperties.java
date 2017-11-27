@@ -6,6 +6,12 @@ import java.security.cert.CertStore;
 import org.jscep.transport.ResultHandler;
 import org.jscep.transport.response.Capabilities;
 
+/**
+ * Requests capacities and CA/RA certificates through {@link ScepClient} and
+ * calls a {@link ResultHandler} with {@link CaProperties} when both results
+ * are available. This avoids too long callback chains and provides for
+ * parallel request execution with non-blocking transports.
+ */
 final class CaProperties {
     private boolean capsRequested;
     private boolean caCertificateRequested;
