@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Set;
 
 import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -84,11 +85,9 @@ public abstract class ScepServlet extends HttpServlet {
             res.setHeader(entry.getKey(), entry.getValue());
         }
         if (scepResponse.getBody() != null) {
-            res.getOutputStream().write(scepResponse.getBody());
-            res.getOutputStream().close();
-        } else if (scepResponse.getMessage() != null) {
-            res.getWriter().write(scepResponse.getMessage());
-            res.getWriter().flush();
+            ServletOutputStream out = res.getOutputStream();
+            out.write(scepResponse.getBody());
+            out.close();
         }
     }
 

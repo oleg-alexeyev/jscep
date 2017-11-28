@@ -3,6 +3,7 @@ package org.jscep.server;
 
 import static javax.servlet.http.HttpServletResponse.SC_OK;
 
+import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -10,7 +11,6 @@ public final class ScepResponse {
     private int status = SC_OK;
     private Map<String, String> headers = new HashMap<String, String>();
     private byte[] body;
-    private String message;
 
     public void setStatus(int status) {
         this.status = status;
@@ -32,15 +32,11 @@ public final class ScepResponse {
         this.body = body;
     }
 
+    public void setMessage(String message) {
+        this.body = message.getBytes(Charset.forName("UTF-8"));
+    }
+
     public byte[] getBody() {
         return body;
-    }
-
-    public void setMessage(String message) {
-        this.message = message;
-    }
-
-    public String getMessage() {
-        return message;
     }
 }
