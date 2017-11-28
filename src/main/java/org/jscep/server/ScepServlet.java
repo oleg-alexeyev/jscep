@@ -76,9 +76,7 @@ public abstract class ScepServlet extends HttpServlet {
                 IOUtils.toByteArray(req.getInputStream()),
                 parameters
         );
-        ScepResponse scepResponse = new ScepResponse();
-
-        server.service(scepRequest, scepResponse);
+        ScepResponse scepResponse = server.handle(scepRequest);
 
         res.setStatus(scepResponse.getStatus());
         for (Map.Entry<String, String> entry :

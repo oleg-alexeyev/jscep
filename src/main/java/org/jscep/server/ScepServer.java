@@ -81,7 +81,7 @@ import org.slf4j.LoggerFactory;
 /**
  * <p>This class implements SCEP server logic.</p>
  *
- * <p>{@link #service(ScepRequest, ScepResponse)} method is the entry point.
+ * <p>{@link #handle(ScepRequest)} method is the entry point.
  * It accepts the request, decodes the operation and corresponding data
  * and calls {@link CertificateAuthority} methods implementing the operation.
  * </p>
@@ -90,7 +90,7 @@ import org.slf4j.LoggerFactory;
  * a {@link ScepResponseBuilder} when {@link CertificateAuthority} completes
  * the operation and calls the builder.</p>
  */
-public class ScepServer {
+public final class ScepServer {
     private static final String GET = "GET";
     private static final String POST = "POST";
     private static final String MSG_PARAM = "message";
@@ -104,32 +104,54 @@ public class ScepServer {
         this.ca = ca;
     }
 
-    public final void service(ScepRequest req, ScepResponse res) {
-        ResponseBuilder builder = new ResponseBuilder(res);
+    public ScepResponse handle(ScepRequest req) {
+        ResponseBuilder builder = new ResponseBuilder();
+        Operation op = getOperation(req, builder);
+        if (op != null && validateMethod(req, op, builder)) {
+            doOperation(req, op, builder);
+        }
+        return builder.build();
+    }
 
-        Operation op;
+    private Operation getOperation(ScepRequest req, ResponseBuilder builder) {
+        Operation op = null;
         try {
             op = getOperation(req);
             if (op == null) {
                 builder.badRequest("Missing \"operation\" parameter.");
-                return;
             }
         } catch (IllegalArgumentException e) {
             builder.badRequest("Invalid \"operation\" parameter.");
-            return;
         }
+        return op;
+    }
 
+    private Operation getOperation(final ScepRequest req) {
+        String op = req.getParameter(OP_PARAM);
+        if (op == null) {
+            return null;
+        }
+        return Operation.forName(req.getParameter(OP_PARAM));
+    }
+
+    private boolean validateMethod(
+            final ScepRequest req, final Operation op,
+            final ResponseBuilder builder
+    ) {
         String reqMethod = req.getMethod();
         if (op == Operation.PKI_OPERATION) {
             if (!reqMethod.equals(POST) && !reqMethod.equals(GET)) {
                 builder.methodNotAllowed(reqMethod, op, GET, POST);
-                return;
+                return false;
             }
         } else if (!reqMethod.equals(GET)) {
             builder.methodNotAllowed(reqMethod, op, GET);
-            return;
+            return false;
         }
+        return true;
+    }
 
+    private void doOperation(ScepRequest req, Operation op, ResponseBuilder builder) {
         try {
             switch (op) {
                 case GET_CA_CAPS:
@@ -153,16 +175,8 @@ public class ScepServer {
         }
     }
 
-    private Operation getOperation(final ScepRequest req) {
-        String op = req.getParameter(OP_PARAM);
-        if (op == null) {
-            return null;
-        }
-        return Operation.forName(req.getParameter(OP_PARAM));
-    }
-
     private void doPkiOperation(ScepRequest req, ResponseBuilder builder)
-    throws Exception {
+            throws Exception {
         byte[] body;
         if (req.getMethod().equals(POST)) {
             body = req.getBody();
@@ -184,8 +198,7 @@ public class ScepServer {
         CMSSignedData sd = new CMSSignedData(body);
 
         Store reqStore = sd.getCertificates();
-        Collection<X509CertificateHolder> reqCerts = reqStore
-                .getMatches(null);
+        Collection<X509CertificateHolder> reqCerts = getCertificates(reqStore);
 
         CertificateFactory factory = CertificateFactory.getInstance("X.509");
         X509CertificateHolder holder = reqCerts.iterator().next();
@@ -253,16 +266,17 @@ public class ScepServer {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private Collection<X509CertificateHolder> getCertificates(Store reqStore) {
+        return reqStore.getMatches(null);
+    }
+
     private final class ResponseBuilder implements ScepResponseBuilder {
-        private final ScepResponse res;
+        private final ScepResponse res = new ScepResponse();
         private Nonce senderNonce;
         private Nonce recipientNonce;
         private TransactionId transId;
         private X509Certificate reqCert;
-
-        ResponseBuilder(ScepResponse res) {
-            this.res = res;
-        }
 
         @Override
         public void capabilities(Set<Capability> caps) {
@@ -488,6 +502,10 @@ public class ScepServer {
 
         void setRequestCertificate(X509Certificate reqCert) {
             this.reqCert = reqCert;
+        }
+
+        ScepResponse build() {
+            return res;
         }
     }
 }
