@@ -163,7 +163,7 @@ public final class Capabilities {
         } else if (digestExists("MD5")) {
             return getDigest("MD5");
         }
-        return getDigest("SHA-256");
+        return null;
     }
 
     public String getStrongestSignatureAlgorithm() {
@@ -176,7 +176,7 @@ public final class Capabilities {
         } else if (sigExists("MD5")) {
             return "MD5withRSA";
         }
-        return "SHA256withRSA";
+        return null;
     }
 
     private boolean sigExists(final String sig) {
