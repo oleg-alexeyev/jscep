@@ -16,6 +16,7 @@ public final class ResultHolder<T, E extends Throwable>
     private final Class<E> errorClass;
     private T result;
     private Throwable error;
+    private boolean complete = false;
 
     public ResultHolder(Class<E> errorClass) {
         this.errorClass = errorClass;
@@ -25,9 +26,13 @@ public final class ResultHolder<T, E extends Throwable>
     public void handle(T t, Throwable e) {
         this.result = t;
         this.error = e;
+        complete = true;
     }
 
     public T getResult() throws E  {
+        if (!complete) {
+            throw new IllegalStateException("No result received");
+        }
         if (error != null) {
             if (errorClass.isInstance(error)) {
                 throw errorClass.cast(error);
