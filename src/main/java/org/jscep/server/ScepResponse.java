@@ -2,28 +2,24 @@ package org.jscep.server;
 
 
 import static java.util.Collections.singletonList;
-import static javax.servlet.http.HttpServletResponse.SC_OK;
 
-import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 public final class ScepResponse {
-    private int status = SC_OK;
-    private Map<String, String> headers = new HashMap<String, String>();
-    private byte[] body;
+    private final int status;
+    private final Map<String, String> headers;
+    private final byte[] body;
 
-    public void setStatus(int status) {
+    public ScepResponse(int status, Map<String, String> headers, byte[] body) {
         this.status = status;
+        this.headers = headers;
+        this.body = body;
     }
 
     public int getStatus() {
         return status;
-    }
-
-    public void setHeader(String name, String value) {
-        headers.put(name, value);
     }
 
     public Map<String, String> getHeaders() {
@@ -36,14 +32,6 @@ public final class ScepResponse {
             h.put(entry.getKey(), singletonList(entry.getValue()));
         }
         return h;
-    }
-
-    public void setBody(byte[] body) {
-        this.body = body;
-    }
-
-    public void setMessage(String message) {
-        this.body = message.getBytes(Charset.forName("UTF-8"));
     }
 
     public byte[] getBody() {

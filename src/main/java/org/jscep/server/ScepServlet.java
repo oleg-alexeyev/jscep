@@ -44,6 +44,7 @@ import org.apache.commons.io.IOUtils;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.jscep.transaction.TransactionId;
+import org.jscep.transport.ResultHolder;
 import org.jscep.transport.response.Capability;
 
 /**
@@ -77,17 +78,25 @@ public abstract class ScepServlet extends HttpServlet {
                 IOUtils.toByteArray(req.getInputStream()),
                 parameters
         );
-        ScepResponse scepResponse = server.handle(scepRequest);
+        ResultHolder<ScepResponse, Throwable> holder =
+                new ResultHolder<ScepResponse, Throwable>(Throwable.class);
 
-        res.setStatus(scepResponse.getStatus());
-        for (Map.Entry<String, String> entry :
-                scepResponse.getHeaders().entrySet()) {
-            res.setHeader(entry.getKey(), entry.getValue());
-        }
-        if (scepResponse.getBody() != null) {
-            ServletOutputStream out = res.getOutputStream();
-            out.write(scepResponse.getBody());
-            out.close();
+        server.service(scepRequest, holder);
+
+        try {
+            ScepResponse scepResponse = holder.getResult();
+            res.setStatus(scepResponse.getStatus());
+            for (Map.Entry<String, String> entry :
+                    scepResponse.getHeaders().entrySet()) {
+                res.setHeader(entry.getKey(), entry.getValue());
+            }
+            if (scepResponse.getBody() != null) {
+                ServletOutputStream out = res.getOutputStream();
+                out.write(scepResponse.getBody());
+                out.close();
+            }
+        } catch (Throwable e) {
+            throw new ServletException(e);
         }
     }
 

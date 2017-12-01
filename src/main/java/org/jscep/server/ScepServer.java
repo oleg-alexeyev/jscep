@@ -23,9 +23,15 @@
 
 package org.jscep.server;
 
+import static javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST;
+import static javax.servlet.http.HttpServletResponse.SC_METHOD_NOT_ALLOWED;
+import static javax.servlet.http.HttpServletResponse.SC_NOT_IMPLEMENTED;
+import static javax.servlet.http.HttpServletResponse.SC_OK;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.charset.Charset;
 import java.security.cert.CRLException;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
@@ -34,10 +40,10 @@ import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-
-import javax.servlet.http.HttpServletResponse;
 
 import org.bouncycastle.asn1.cms.IssuerAndSerialNumber;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -73,6 +79,7 @@ import org.jscep.transaction.MessageType;
 import org.jscep.transaction.Nonce;
 import org.jscep.transaction.OperationFailureException;
 import org.jscep.transaction.TransactionId;
+import org.jscep.transport.ResultHandler;
 import org.jscep.transport.request.Operation;
 import org.jscep.transport.response.Capability;
 import org.slf4j.Logger;
@@ -81,7 +88,7 @@ import org.slf4j.LoggerFactory;
 /**
  * <p>This class implements SCEP server logic.</p>
  *
- * <p>{@link #handle(ScepRequest)} method is the entry point.
+ * <p>{@link #service} method is the entry point.
  * It accepts the request, decodes the operation and corresponding data
  * and calls {@link CertificateAuthority} methods implementing the operation.
  * </p>
@@ -104,13 +111,12 @@ public final class ScepServer {
         this.ca = ca;
     }
 
-    public ScepResponse handle(ScepRequest req) {
-        ResponseBuilder builder = new ResponseBuilder();
+    public void service(ScepRequest req, ResultHandler<ScepResponse> handler) {
+        ResponseBuilder builder = new ResponseBuilder(handler);
         Operation op = getOperation(req, builder);
         if (op != null && validateMethod(req, op, builder)) {
             doOperation(req, op, builder);
         }
-        return builder.build();
     }
 
     private Operation getOperation(ScepRequest req, ResponseBuilder builder) {
@@ -261,8 +267,7 @@ public final class ScepServer {
                 ca.enrol(certReq, reqCert, transId, builder);
                 break;
             default:
-                throw new RuntimeException("Unknown message type: " +
-                        msgType);
+                throw new RuntimeException("Unknown message type: " + msgType);
         }
     }
 
@@ -272,32 +277,33 @@ public final class ScepServer {
     }
 
     private final class ResponseBuilder implements ScepResponseBuilder {
-        private final ScepResponse res = new ScepResponse();
+        private final ResultHandler<ScepResponse> handler;
         private Nonce senderNonce;
         private Nonce recipientNonce;
         private TransactionId transId;
         private X509Certificate reqCert;
 
+        ResponseBuilder(ResultHandler<ScepResponse> handler) {
+            this.handler = handler;
+        }
+
         @Override
         public void capabilities(Set<Capability> caps) {
-            res.setHeader("Content-Type", "text/plain");
             StringBuilder builder = new StringBuilder();
             for (Capability cap : caps) {
                 builder.append(cap.toString());
                 builder.append('\n');
             }
-            res.setMessage(builder.toString());
+            build(SC_OK, builder.toString());
         }
 
         @Override
         public void caCertificate(List<X509Certificate> certs) {
             try {
                 if (certs.size() == 0) {
-                    res.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                    res.setMessage("GetCaCert failed to obtain CA from store");
+                    error(new IllegalStateException("GetCaCert failed to obtain CA from store"));
                 } else if (certs.size() == 1) {
-                    res.setHeader("Content-Type", "application/x-x509-ca-cert");
-                    res.setBody(certs.get(0).getEncoded());
+                    build("application/x-x509-ca-cert", certs.get(0).getEncoded());
                 } else {
                     CMSSignedDataGenerator generator = new CMSSignedDataGenerator();
                     JcaCertStore store = new JcaCertStore(certs);
@@ -305,8 +311,7 @@ public final class ScepServer {
                     CMSSignedData degenerateSd = generator.generate(
                             new CMSAbsentContent()
                     );
-                    res.setHeader("Content-Type", "application/x-x509-ca-ra-cert");
-                    res.setBody(degenerateSd.getEncoded());
+                    build("application/x-x509-ca-ra-cert", degenerateSd.getEncoded());
                 }
             } catch (CertificateEncodingException e) {
                 error(e);
@@ -321,10 +326,8 @@ public final class ScepServer {
         public void nextCaCertificate(List<X509Certificate> certs) {
             try {
                 if (certs.size() == 0) {
-                    res.setStatus(HttpServletResponse.SC_NOT_IMPLEMENTED);
-                    res.setMessage("GetNextCACert is not supported");
+                    build(SC_NOT_IMPLEMENTED, "GetNextCACert is not supported");
                 } else {
-                    res.setHeader("Content-Type", "application/x-x509-next-ca-cert");
                     CMSSignedDataGenerator generator = new CMSSignedDataGenerator();
                     JcaCertStore store = new JcaCertStore(certs);
                     generator.addCertificates(store);
@@ -342,8 +345,7 @@ public final class ScepServer {
 
                     CMSSignedData degenerateSd = generator
                             .generate(new CMSAbsentContent());
-                    byte[] bytes = degenerateSd.getEncoded();
-                    res.setBody(bytes);
+                    build("application/x-x509-next-ca-cert", degenerateSd.getEncoded());
                 }
             } catch (CertificateEncodingException e) {
                 error(e);
@@ -434,8 +436,7 @@ public final class ScepServer {
                 encodeCertRep(new CertRep(transId, senderNonce, recipientNonce,
                         ofe.getFailInfo()));
             } else {
-                res.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                res.setMessage("Failed to process request");
+                handler.handle(null, e);
             }
         }
 
@@ -446,27 +447,24 @@ public final class ScepServer {
                 PkiMessageEncoder encoder = new PkiMessageEncoder(ca.getSignerKey(),
                         ca.getSigner(), ca.getSignerCertificateChain(), envEncoder);
                 CMSSignedData signedData = encoder.encode(certRep);
-                res.setHeader("Content-Type", "application/x-pki-message");
-                res.setBody(signedData.getEncoded());
+                build("application/x-pki-message", signedData.getEncoded());
             } catch (MessageEncodingException e) {
-                throw new RuntimeException(e);
+                handler.handle(null, e);
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                handler.handle(null, e);
             }
         }
 
         @Override
         public void badRequest(String message) {
             LOGGER.error(message);
-            res.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            res.setMessage(message);
+            build(SC_BAD_REQUEST, message);
         }
 
         @Override
         public void badRequest(String message, Throwable cause) {
             LOGGER.error(message, cause);
-            res.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            res.setMessage(message);
+            build(SC_BAD_REQUEST, message);
         }
 
         void methodNotAllowed(
@@ -477,7 +475,6 @@ public final class ScepServer {
                     "Method {} not allowed for operation {}",
                     method, operation
             );
-            res.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
             StringBuilder b = new StringBuilder();
             for (String m : allowedMethods) {
                 if (b.length() > 0) {
@@ -485,7 +482,7 @@ public final class ScepServer {
                 }
                 b.append(m);
             }
-            res.setHeader("Allow", b.toString());
+            build(SC_METHOD_NOT_ALLOWED, headers("Allow", b.toString()), null);
         }
 
         void setSenderNonce(Nonce senderNonce) {
@@ -504,8 +501,23 @@ public final class ScepServer {
             this.reqCert = reqCert;
         }
 
-        ScepResponse build() {
-            return res;
+        private void build(String contentType, byte[] body) {
+            build(SC_OK, headers("Content-Type", contentType), body);
+        }
+
+        private void build(int status, String message) {
+            build(status, headers("Content-Type", "text/plain"),
+                    message.getBytes(Charset.forName("UTF-8")));
+        }
+
+        private Map<String, String> headers(String name, String value) {
+            Map<String, String> headers = new HashMap<String, String>();
+            headers.put(name, value);
+            return headers;
+        }
+
+        private void build(int status, Map<String, String> headers, byte[] body) {
+            handler.handle(new ScepResponse(status, headers, body), null);
         }
     }
 }
