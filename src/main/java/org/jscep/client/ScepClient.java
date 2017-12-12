@@ -799,7 +799,8 @@ public final class ScepClient {
             return holder.isSignatureValid(verifierProvider);
         } catch (RuntimeOperatorException e) {
             if(e.getCause() instanceof  SignatureException) {
-                LOGGER.warn("SignatureException detected so we consider that the certificate is not self signed");
+                LOGGER.info("SignatureException detected so we consider that " +
+                        "the certificate is not self signed");
                 return false;
             }
             throw new ClientException(e);
